@@ -3,9 +3,8 @@ CDC PLACES — Local Data for Better Health, County Data (current release).
 Endpoint: https://chronicdata.cdc.gov/resource/swc5-untb.json
 
 Strategy:
-  - Filter by state + category server-side (both are reliable exact-match fields).
+  - Filter by state + category server-side (both reliable exact-match fields).
   - Optionally narrow with measure keyword client-side.
-This avoids the "no rows" trap of relying entirely on text matching.
 """
 import requests
 import pandas as pd
@@ -13,7 +12,6 @@ import streamlit as st
 
 ENDPOINT = "https://chronicdata.cdc.gov/resource/swc5-untb.json"
 
-# PLACES categories — these are the controlled values in the `category` column.
 CATEGORIES = [
     "Health Outcomes",
     "Prevention",
@@ -50,11 +48,10 @@ def render_filters() -> dict:
     }
 
 
-def fetch(state: str, category: str, measure_keyword: str, limit: int) -> pd.DataFrame:
-    params = {
-        "$limit": limit,
-        "category": category,   # exact match — fast and reliable
-    }
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_cached(state: str, category: str, measure_keyword: str, limit: int) -> pd.DataFrame:
+    """Cached inner fetch. All args are scalar/hashable."""
+    params = {"$limit": limit, "category": category}
     if state:
         params["stateabbr"] = state
 
@@ -70,14 +67,17 @@ def fetch(state: str, category: str, measure_keyword: str, limit: int) -> pd.Dat
     if df.empty:
         return df
 
-    # Optional client-side keyword narrowing
     if measure_keyword and "measure" in df.columns:
         df = df[df["measure"].str.contains(measure_keyword, case=False, na=False)]
 
-    # Type cleanup
     for col in ("data_value", "low_confidence_limit", "high_confidence_limit",
                 "totalpopulation", "year"):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
     return df.reset_index(drop=True)
+
+
+def fetch(state: str, category: str, measure_keyword: str, limit: int) -> pd.DataFrame:
+    """Public entry point."""
+    return _fetch_cached(state, category, measure_keyword.strip().lower(), limit)

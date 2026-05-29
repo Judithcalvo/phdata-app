@@ -12,7 +12,6 @@ Actual columns on this dataset (lowercased Socrata names):
   geolocation
 
 Strategy: minimal server-side filter (year only), then filter client-side.
-This avoids brittle $select / $where clauses against unknown column types.
 """
 import requests
 import pandas as pd
@@ -40,12 +39,10 @@ def render_filters() -> dict:
     return {"year": year, "states": states, "topic": topic, "limit": int(row_limit)}
 
 
-def fetch(year: int, states: list[str], topic: str, limit: int) -> pd.DataFrame:
-    # Only filter on year server-side; we'll filter the rest in pandas.
-    params = {
-        "year": str(year),     # simple field=value filter — most reliable Socrata form
-        "$limit": limit,
-    }
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_cached(year: int, states: tuple, topic: str, limit: int) -> pd.DataFrame:
+    """Cached inner fetch. Uses tuple for states (hashable)."""
+    params = {"year": str(year), "$limit": limit}
     r = requests.get(ENDPOINT, params=params, timeout=60)
     if r.status_code != 200:
         try:
@@ -58,16 +55,19 @@ def fetch(year: int, states: list[str], topic: str, limit: int) -> pd.DataFrame:
     if df.empty:
         return df
 
-    # Client-side filters
     if states and "locationabbr" in df.columns:
         df = df[df["locationabbr"].isin(states)]
     if topic and "topic" in df.columns:
         df = df[df["topic"].str.contains(topic, case=False, na=False)]
 
-    # Type cleanup for downstream tools
     for col in ("data_value", "confidence_limit_low", "confidence_limit_high",
                 "sample_size", "year"):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
     return df.reset_index(drop=True)
+
+
+def fetch(year: int, states: list, topic: str, limit: int) -> pd.DataFrame:
+    """Public entry point — converts list → tuple for cache compatibility."""
+    return _fetch_cached(year, tuple(sorted(states)), topic.strip().lower(), limit)

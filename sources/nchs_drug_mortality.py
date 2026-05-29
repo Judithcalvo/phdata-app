@@ -39,7 +39,9 @@ def render_filters() -> dict:
     }
 
 
-def fetch(state: str, year_from: int, year_to: int, limit: int) -> pd.DataFrame:
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_cached(state: str, year_from: int, year_to: int, limit: int) -> pd.DataFrame:
+    """Cached inner fetch. All args are scalar/hashable."""
     params = {"$limit": limit}
     if state:
         params["state"] = state
@@ -56,14 +58,17 @@ def fetch(state: str, year_from: int, year_to: int, limit: int) -> pd.DataFrame:
     if df.empty:
         return df
 
-    # Numeric type cleanup
     for col in ("year", "estimated_age_adjusted_rate", "estimated_age_adjusted_rate_lower",
                 "estimated_age_adjusted_rate_upper", "population"):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Year range filter (client-side)
     if "year" in df.columns:
         df = df[(df["year"] >= year_from) & (df["year"] <= year_to)]
 
     return df.reset_index(drop=True)
+
+
+def fetch(state: str, year_from: int, year_to: int, limit: int) -> pd.DataFrame:
+    """Public entry point."""
+    return _fetch_cached(state, year_from, year_to, limit)
